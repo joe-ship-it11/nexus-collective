@@ -1,0 +1,10 @@
+discord.py>=2.3.0
+python-dotenv>=1.0.0
+
+# Nexus brain
+anthropic>=0.40.0
+mem0ai>=0.1.0
+
+# Mem0 deps (embeddings + vector store, free/local)
+sentence-transformers>=2.2.0
+chromadb>=0.4.0

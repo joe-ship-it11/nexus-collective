@@ -1,0 +1,121 @@
+# ───────────────── secrets ─────────────────
+.env
+.env.local
+.env.*
+!.env.example
+*.token
+*.key
+
+# ───────────────── state & data ─────────────────
+# Bot state / JSON (contains message IDs, cooldown timestamps, per-user flags)
+caretaker_state.json
+feedback_state.json
+fortune_state.json
+fortunes_state.json
+quotes_state.json
+voice_state.json
+feedback_log.jsonl
+
+# mem0 vector store (all memories of real people — PII)
+mem0_data/
+profiles/
+profiles_cache/
+
+# Voice/text transcripts (real conversations — PII)
+voice_transcripts.jsonl
+voice_call_transcript_*.txt
+conversation_transcript_*.txt
+conversation_analysis_*.md
+listen_temp/
+tts_temp/
+
+# ───────────────── logs ─────────────────
+logs/
+*.log
+nexus_bot.log
+nexus_bot.out
+nexus_bot.err
+nexus_bot.*.log
+nexus_bot.stderr*
+nexus_bot.stdout*
+bot_stdout.log
+bot_stderr.log
+facelift_stdout.log
+facelift_stderr.log
+ship_stdout.log
+ship_stderr.log
+audit_out.log
+audit_err.log
+
+# ───────────────── scratch / debug / test output ─────────────────
+# Leading-underscore files are all ad-hoc scratch
+_*.py
+_*.txt
+_*.log
+_*.out
+_*.err
+_*.bat
+
+# Standalone test output files (not proper tests)
+*.out
+*.err
+bl.out
+bl.err
+err.txt
+out.txt
+syntax.out
+syntax.err
+analyze.out
+analyze.err
+pip_*.out
+pip_*.err
+pip_*.log
+pip_*.txt
+piperr.txt
+pipout.txt
+debug_whisper*.out
+debug_whisper*.err
+vfb*.log
+vfb*.err
+vt*.log
+vt*.err
+ytv*.log
+ytv*.err
+whtest.log
+whtest.err
+backfill.out
+backfill.err
+import_test.out
+import_test.err
+peek_state.log
+peek_state.err
+kick_clawdbot.log
+kick_clawdbot.err
+sanity_out.txt
+sanity_err.txt
+pytest_out.txt
+pytest_err.txt
+setup_meanings.log
+setup_meanings.err
+
+# ───────────────── python ─────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# ───────────────── editor / OS ─────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ───────────────── private docs (review before sharing) ─────────────────
+# Persona + strategy docs — keep private unless you explicitly want them public
+persona.md
+about_nexus_pin.md
+vision_pin.md
+announcement_consent_ship.md
+DISPATCH_PROMPT.md
