@@ -14,6 +14,7 @@ Env (in .env):
 """
 
 import asyncio
+import random as _random  # continuation ambient-skip dice
 import os
 import re
 import sys
@@ -1038,14 +1039,31 @@ async def on_message(message: discord.Message):
     # No passive listening, no name-trigger, no memory writes.
     addressed_by_mention = bot.user in message.mentions
     addressed_by_name = bool(_NAME_TRIGGER.search(message.content or ""))
-    # Continuation: if Nexus just spoke in this channel, treat any non-bot
-    # reply as addressed to it (for ~60s). Skip in ignore channels.
+    # Continuation: if Nexus just replied TO THIS USER in this channel, treat
+    # their next message as addressed (no @ needed) for ~30s. Scoped to the
+    # user — other people talking in the same channel don't trigger
+    # continuation. Fixes the vending-machine "nexus butts into every
+    # conversation because it posted 20s ago" failure mode.
     in_continuation = False
     if not is_ignored:
         try:
-            in_continuation = nexus_continuation.is_in_window(message.channel.id)
+            in_continuation = nexus_continuation.is_in_window(
+                message.channel.id,
+                user_id=message.author.id,
+            )
         except Exception:
             in_continuation = False
+    # Ambient-skip die: even when the continuation window is open, roll a
+    # 30% chance to stay silent. Nexus is "in the room" but not compelled to
+    # respond to every follow-up — feels more like a person, less like a
+    # vending machine. Only fires on continuation; direct @ and name-trigger
+    # ALWAYS respond (they're explicit requests).
+    CONTINUATION_SKIP_PROB = 0.30
+    continuation_skipped = False
+    if in_continuation and not (addressed_by_mention or addressed_by_name):
+        if _random.random() < CONTINUATION_SKIP_PROB:
+            in_continuation = False
+            continuation_skipped = True
 
     # Debug-surface accounting: log every message we saw + how it routed.
     if is_ignored and not addressed_by_mention:
@@ -1063,6 +1081,9 @@ async def on_message(message: discord.Message):
     elif in_continuation:
         _reason = "continuation window"
         _triggered = True
+    elif continuation_skipped:
+        _reason = "continuation window (ambient-skipped)"
+        _triggered = False
     else:
         _reason = "no trigger (passive listen only)"
         _triggered = False
@@ -1165,6 +1186,18 @@ async def on_message(message: discord.Message):
                     str(message.author.id),
                 )
             if reply_text:
+                # Human-ish typing delay: base 2s + 0.5s per 100 chars,
+                # capped at 6s. Discord's typing indicator shows during the
+                # sleep, so users see nexus "thinking" instead of materializing
+                # replies instantly. Small — not annoying — just enough to
+                # feel like a person read and typed rather than a vending
+                # machine.
+                try:
+                    _typing_s = min(6.0, 2.0 + 0.5 * (len(reply_text) / 100.0))
+                    async with message.channel.typing():
+                        await asyncio.sleep(_typing_s)
+                except Exception:
+                    pass
                 # Use Discord's native reply so attribution is visible even in
                 # a busy channel. First chunk replies, rest are sends.
                 chunks = [reply_text[i:i+1900] for i in range(0, len(reply_text), 1900)]
@@ -1177,9 +1210,15 @@ async def on_message(message: discord.Message):
                         first = False
                     else:
                         await message.channel.send(chunk)
-                # Mark continuation window + stamp for feedback learning
+                # Mark continuation window + stamp for feedback learning.
+                # Pass user_id so continuation is scoped to the message author
+                # (the user we just replied to) — only their next message in
+                # this channel will fire continuation, not anyone else's.
                 try:
-                    nexus_continuation.mark_replied(message.channel.id)
+                    nexus_continuation.mark_replied(
+                        message.channel.id,
+                        user_id=message.author.id,
+                    )
                 except Exception:
                     pass
                 try:

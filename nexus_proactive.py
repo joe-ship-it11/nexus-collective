@@ -431,11 +431,18 @@ async def _generate_and_send(
 
     channel_id = getattr(channel, "id", None)
     _record_chime(channel_id, kind)
-    # Open the continuation window so a follow-up reply doesn't need an @
+    # Open the continuation window, scoped to the user we chimed at (if any).
+    # For proactive chimes with no specific recipient (user_id=None), the
+    # window is still recorded but won't match any user's next message —
+    # continuation is a no-op in that case by design.
     try:
         import nexus_continuation
         if channel_id is not None:
-            nexus_continuation.mark_replied(channel_id)
+            try:
+                _cont_uid = int(user_id) if user_id is not None else None
+            except (TypeError, ValueError):
+                _cont_uid = None
+            nexus_continuation.mark_replied(channel_id, user_id=_cont_uid)
     except Exception:
         pass
     # Stamp for feedback learning (reaction emojis tell us if it landed)

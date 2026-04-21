@@ -1,20 +1,32 @@
 """
-Nexus continuation — short per-channel "still in the conversation" window.
+Nexus continuation — scoped per-channel "still in the conversation" window.
 
-After Nexus posts a reply, we briefly treat that channel as "Nexus is actively
-talking here" so the next message in that channel can be addressed to Nexus
-without an @-mention or the literal "nexus" keyword. The orchestrator calls
-is_in_window() in on_message as an additional trigger condition.
+After Nexus replies to a specific user, we briefly treat THAT user's next
+message in THAT channel as addressed to Nexus (no @-mention needed). Messages
+from OTHER users in the same channel during the window do NOT trigger
+continuation — they need to @ or name-trigger Nexus explicitly.
+
+This fixes the vending-machine feel where Nexus would butt into a conversation
+between two other humans just because it had recently posted. Concrete pattern
+we saw in the wild: Nexus replies to user A, then users B and C start talking
+to each other in the same channel, and Nexus would reply to every one of their
+messages because the window was channel-scoped, not user-scoped.
 
 Pure logic — no discord.py calls, no HTTP, no persistence. State is an
 in-memory dict guarded by a threading.Lock and resets on restart (window is
 short, so persistence isn't worth the complexity).
 
 Public API:
-  install(bot)              — log install line, reset state
-  mark_replied(channel_id)  — call after Nexus sends a chat reply
-  is_in_window(channel_id)  — True if Nexus replied within window_s
-  clear(channel_id)         — drop a channel's window (silence / topic shift)
+  install(bot)
+  mark_replied(channel_id, user_id=None)  — Nexus just replied; record recipient.
+                                             user_id=None means "no specific
+                                             user" (e.g. proactive channel
+                                             chime), in which case the window
+                                             won't match anyone.
+  is_in_window(channel_id, user_id)       — True iff Nexus replied to THIS
+                                             user in THIS channel within the
+                                             window. Scoped match.
+  clear(channel_id)                        — drop a channel's window.
 """
 
 from __future__ import annotations
@@ -22,13 +34,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Optional
 
 
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
-DEFAULT_WINDOW_S: int = 60
+# Shorter than the old 60s default — 30s reads as "we're in the same breath"
+# rather than "the bot is still clinging to a minute-old exchange."
+DEFAULT_WINDOW_S: int = 30
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +52,6 @@ log = logging.getLogger(__name__)
 
 
 def _log(msg: str) -> None:
-    # Match sibling modules: print-style lowercase line with module prefix.
-    # Also emit through the stdlib logger so log handlers see it.
     line = f"[nexus_continuation] {msg}"
     print(line, flush=True)
     try:
@@ -52,7 +64,9 @@ def _log(msg: str) -> None:
 # State
 # ---------------------------------------------------------------------------
 _lock: threading.Lock = threading.Lock()
-_last_replied: dict[int, float] = {}
+# channel_id -> (user_id, monotonic_ts). user_id = 0 means "ambient" (no
+# specific recipient); such windows don't match any user's next message.
+_last_replied: dict[int, tuple[int, float]] = {}
 _installed: bool = False
 
 
@@ -68,26 +82,44 @@ def install(bot: Any) -> None:
         with _lock:
             _last_replied.clear()
         _installed = True
-        _log(f"installed - window={DEFAULT_WINDOW_S}s")
+        _log(f"installed — window={DEFAULT_WINDOW_S}s, user-scoped")
     except Exception as e:
         _log(f"install error ({type(e).__name__}): {e}")
 
 
-def mark_replied(channel_id: int) -> None:
-    """Start/refresh the continuation window for this channel."""
+def mark_replied(channel_id: int, user_id: Optional[int] = None) -> None:
+    """Start/refresh the continuation window for this channel.
+
+    user_id: the user Nexus just replied TO. When their next message arrives
+    in this channel within DEFAULT_WINDOW_S, continuation fires for them and
+    only them. Pass None for ambient broadcasts (proactive chimes with no
+    specific recipient) — such windows won't match any user, effectively a
+    no-op for continuation but still useful for other bookkeeping.
+    """
     try:
         cid = int(channel_id)
     except (TypeError, ValueError):
         return
+    try:
+        uid = int(user_id) if user_id is not None else 0
+    except (TypeError, ValueError):
+        uid = 0
     now = time.monotonic()
     with _lock:
-        _last_replied[cid] = now
+        _last_replied[cid] = (uid, now)
 
 
-def is_in_window(channel_id: int, window_s: int = DEFAULT_WINDOW_S) -> bool:
-    """True if Nexus replied in this channel within the last window_s seconds."""
+def is_in_window(channel_id: int, user_id: int,
+                 window_s: int = DEFAULT_WINDOW_S) -> bool:
+    """True iff Nexus replied to THIS user in THIS channel within window_s.
+
+    Scoped match: the stored recipient user_id must equal the passed user_id.
+    If Nexus's last reply was to someone else in this channel, this returns
+    False — even though the window is still open. That's the whole point.
+    """
     try:
         cid = int(channel_id)
+        uid = int(user_id)
     except (TypeError, ValueError):
         return False
     try:
@@ -98,14 +130,15 @@ def is_in_window(channel_id: int, window_s: int = DEFAULT_WINDOW_S) -> bool:
         return False
     now = time.monotonic()
     with _lock:
-        ts = _last_replied.get(cid)
-        if ts is None:
+        entry = _last_replied.get(cid)
+        if entry is None:
             return False
-        if (now - ts) <= w:
-            return True
-        # Expired — drop it so the dict doesn't grow forever.
-        _last_replied.pop(cid, None)
-        return False
+        stored_uid, ts = entry
+        if (now - ts) > w:
+            # Expired — drop so the dict doesn't grow forever.
+            _last_replied.pop(cid, None)
+            return False
+        return stored_uid == uid
 
 
 def clear(channel_id: int) -> None:
